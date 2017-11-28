@@ -20,7 +20,7 @@ defmodule EMQ.Plugins.Bridge.Mixfile do
 
   defp env() do
     # Refer to emqttc connect options for mqtt_opts
-    [{:mqtt_opts, [{:logger, :info}]}]
+    [{:mqtt_opts, [{:logger, :info}]}] ++ Mix.Config.read!("config/config.exs")
   end
 
   def application do
