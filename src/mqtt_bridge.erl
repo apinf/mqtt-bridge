@@ -53,20 +53,27 @@ handle_info({publish, C, Topic, Payload}, State = #state{source = C}) ->
   end,
   {noreply, State};
 
-handle_info({mqttc, C, connected}, State = #state{sink = C}) ->
-  {noreply, State};
 handle_info({mqttc, C, connected}, State = #state{source = C}) ->
+  io:format("Source (~p) connected~n", [C]),
+  {noreply, State};
+handle_info({mqttc, C, connected}, State = #state{sink = C}) ->
+  io:format("Sink (~p) connected~n", [C]),
   {noreply, State};
 
 handle_info({mqttc, C, disconnected}, S = #state{sink = C}) ->
-  C1 = connect_and_subscribe(S#state.sink_opts, sink, S#state.transforms),
-  {noreply, S#state{sink = C1}};
+  io:format("Sink (~p) disconnected~n", [C]),
+  {noreply, S};
 handle_info({mqttc, C, disconnected}, S = #state{source = C}) ->
+  io:format("Source (~p) disconnected~n", [C]),
+  {noreply, S};
+handle_info({'EXIT', C, Reason}, S = #state{source = C}) ->
+  io:format("Source ~p exited for reason ~p~n", [C, Reason]),
   C1 = connect_and_subscribe(S#state.source_opts, source, S#state.transforms),
   {noreply, S#state{source = C1}};
-handle_info({'EXIT', C, Reason}, State) ->
-  io:format("PID ~p exited for reason ~p~n", [C, Reason]),
-  {noreply, State};
+handle_info({'EXIT', C, Reason}, S = #state{sink = C}) ->
+  io:format("Sink ~p exited for reason ~p~n", [C, Reason]),
+  C1 = connect_and_subscribe(S#state.sink_opts, sink, S#state.transforms),
+  {noreply, S#state{sink = C1}};
 handle_info(Event, State) ->
   io:format("UNEXPECTED EVENT: ~p~n", [Event]),
   {noreply, State}.
