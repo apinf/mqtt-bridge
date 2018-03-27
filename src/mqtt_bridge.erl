@@ -3,6 +3,7 @@
 -export([start/0]).
 
 -export([init/1, handle_info/2, terminate/2]).
+-export([process_message/3]).
 
 -type topic()  :: binary().
 % -type qos() :: qos0 | qos1 | qos2 | 0 | 1 | 2.
@@ -15,7 +16,8 @@
                 sink :: pid(),
                 transforms :: topicrewritespec(),
                 source_opts :: [emqttc:mqttc_opt()],
-                sink_opts :: [emqttc:mqttc_opt()]
+                sink_opts :: [emqttc:mqttc_opt()],
+                timer :: timer:tref()
                }).
 start() ->
   {ok, TopicRewriteSpec} = application:get_env(topics),
@@ -36,21 +38,29 @@ start_link(Name, Args) ->
     Client    :: pid().
 init({SourceOpts, SinkOpts, TopicRewriteSpec}) ->
   process_flag(trap_exit, true),
+  process_flag(message_queue_data, off_heap),
   Source = connect_and_subscribe(SourceOpts, source, TopicRewriteSpec),
   Sink = connect_and_subscribe(SinkOpts, sink, TopicRewriteSpec),
+  {ok, TRef} = timer:send_interval(60000, minute_timer),
   State = #state{source = Source,
                  sink = Sink,
                  transforms = TopicRewriteSpec,
                  source_opts = SourceOpts,
-                 sink_opts = SinkOpts},
+                 sink_opts = SinkOpts,
+                 timer = TRef},
   {ok, State}.
 
 
-handle_info({publish, C, Topic, Payload}, State = #state{source = C}) ->
+process_message(Topic, Payload, State) ->
   case transform(Topic, State#state.transforms) of
     undefined -> ok;
     NewTopic -> emqttc:publish(State#state.sink, NewTopic, Payload)
-  end,
+  end.
+
+handle_info({publish, C, Topic, Payload}, State = #state{source = C}) ->
+  %% TODO: turn this into a simple_one_for_one supervisor's start_child
+  %% TODO: Consider a hybrid strategy of spawning only when under heavy load
+  spawn(?MODULE, process_message, [Topic, Payload, State]),
   {noreply, State};
 
 handle_info({mqttc, C, connected}, State = #state{source = C}) ->
@@ -74,6 +84,16 @@ handle_info({'EXIT', C, Reason}, S = #state{sink = C}) ->
   io:format("Sink ~p exited for reason ~p~n", [C, Reason]),
   C1 = connect_and_subscribe(S#state.sink_opts, sink, S#state.transforms),
   {noreply, S#state{sink = C1}};
+
+handle_info(minute_timer, S) ->
+  PInfo = erlang:process_info(self(), message_queue_len),
+  case PInfo of
+    {message_queue_len, Len} when Len > 1000 ->
+      io:format("WARN: Bridge message queue length: ~p~n", [Len]);
+    _ -> ok
+  end,
+  {noreply, S};
+
 handle_info(Event, State) ->
   io:format("UNEXPECTED EVENT: ~p~n", [Event]),
   {noreply, State}.
